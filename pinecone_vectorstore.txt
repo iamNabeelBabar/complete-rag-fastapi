@@ -1,0 +1,152 @@
+from pinecone import Pinecone, ServerlessSpec
+from langchain_pinecone import PineconeVectorStore
+from fastapi import HTTPException
+from typing import List
+from dotenv import load_dotenv
+
+load_dotenv()
+from core.settings import settings
+
+pinecone_key = settings.PINECONE_API_KEY
+
+
+class PineconeInsertRetrieval:
+    def _init_(self, api_key):
+        self.api_key = api_key
+
+    # check index is exist or not
+    def check_index(self, index):
+        pc = Pinecone(api_key=self.api_key)
+        indexes = pc.list_indexes().names()
+        if index not in indexes:
+            return "Not Found index"
+        elif index in indexes:
+            return f"Your index name {index} Found"
+
+    # create new index
+    def create_index(self, index_name, dimentions):
+        try:
+            pc = Pinecone(api_key=self.api_key)
+            pc.create_index(
+                name=index_name,
+                dimension=dimentions,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+            print(f"Your index {index_name} created successfull")
+            return index_name
+        except Exception as ex:
+            return f"sorry try again {ex}"
+
+    # Delete Index Name
+    def delete_index_name(self, index_name):
+        try:
+            pc = Pinecone(api_key=self.api_key)
+            indexes = pc.list_indexes().names()
+            if index_name not in indexes:
+                return f"Index '{index_name}' does not exist."
+            pc.delete_index(index_name)
+            return f"Index '{index_name}' deleted successfully."
+        except Exception as ex:
+            return f"Failed to delete index '{index_name}': {ex}"
+
+    # Delete NameSpace
+    def delete_name_spaces(self, index_name, name_space):
+        try:
+            # Initialize the index
+            pc = Pinecone(api_key=self.api_key)
+            index = pc.Index(index_name)
+            # Delete the namespace
+            response = index.delete(namespace=name_space, delete_all=True)
+            if response == {}:
+                return f"Namespace '{name_space}' deleted successfully from index '{index_name}'."
+            else:
+                return f"Unexpected response: {response}"
+        except Exception:
+            return "An error occurred: Failed to Delete Namespace"
+
+    # Create New nameSpace and insert Data in it
+    def insert_data_in_namespace(self, documents, embeddings, index_name, name_space):
+        try:
+            doc_search = PineconeVectorStore.from_documents(
+                documents, embeddings, index_name=index_name, namespace=name_space
+            )
+            print(f"Your Name space {name_space} is Created successfully")
+            return doc_search
+        except Exception as ex:
+            return f"Failed to created namespace {ex}"
+
+    # Insert Data in Index name
+    def insert_data_in_index(self, documents, embeddings, index_name):
+        try:
+            PineconeVectorStore.from_documents(
+                documents, embedding=embeddings, index_name=index_name
+            )
+            print(f"Your Data insert in {index_name} successfully")
+        except Exception as ex:
+            return f"Failed to created namespace {ex}"
+
+    # Retrieve Data from index name
+    def retrieve_from_index_name(self, index_name, embeddings):
+        try:
+            pc = Pinecone(api_key=self.api_key)
+            index = pc.Index(index_name)
+            vector_store = PineconeVectorStore(index=index, embedding=embeddings)
+            return vector_store
+        except Exception as ex:
+            return f"Failed to load VectorStore {ex}"
+
+    # Retrieve Data from Namespace
+    def retrieve_from_namespace(self, index_name, embeddings, name_space):
+        try:
+            vectorstore = PineconeVectorStore.from_existing_index(
+                embedding=embeddings, index_name=index_name, namespace=name_space
+            )
+            return vectorstore
+        except Exception as ex:
+            return f"Failed to load VectorStore {ex}"
+        
+
+    def fetch_all_vectors(self, index_name: str) -> dict:
+        """
+        Fetches all vectors (IDs + values + metadata) for a serverless index using list + fetch.
+        Note: index.fetch() always returns values and metadata by default.
+        """
+        namespace = "_default_"
+        pc = Pinecone(api_key=self.api_key)
+        idx = pc.Index(index_name)
+
+        try:
+            all_ids = []
+            for batch in idx.list(namespace=namespace or None, limit=100):
+                all_ids.extend(batch)
+
+            result = {}
+            for i in range(0, len(all_ids), 100):
+                fetch_ids = all_ids[i : i + 100]
+                resp = idx.fetch(ids=fetch_ids, namespace=namespace or None)
+                result.update(resp.vectors)  # items include both 'values' and 'metadata'
+            return result
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        
+    def list_indexes(self) -> List[str]:
+        pc = Pinecone(api_key=self.api_key)
+        return pc.list_indexes().names()
+    
+
+    def delete_by_id(self, index_name: str, vector_id: str) -> None:
+        """
+        Deletes a single vector from the specified index and namespace by its ID.
+        """
+        namespace = "_default_"
+        idx = Pinecone(api_key=self.api_key).Index(index_name)
+        try:
+            idx.delete(ids=[vector_id], namespace=namespace or None)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+
+pine_ = PineconeInsertRetrieval(pinecone_key)
